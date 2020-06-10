@@ -365,6 +365,13 @@ func StopOnSignal(sig <-chan struct{}) Option {
 	})
 }
 
+// StopOnOSSignal uses OSStopSignal for StopOnSignal channel
+func StopOnOSSignal() Option {
+	return OptionFunc(func(mngr *Manager) {
+		StopOnSignal(OSStopSignal()).apply(mngr)
+	})
+}
+
 // New creates a new service-manager
 func New(stopTimeout time.Duration, options ...Option) *Manager {
 	mngr := &Manager{
