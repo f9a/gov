@@ -1,4 +1,4 @@
-package gov
+package gov_test
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/f9a/gov"
+	"github.com/f9a/gov/service"
 )
 
 func newMoonRabbit() (func(), chan struct{}) {
@@ -32,8 +35,9 @@ func newMoonRabbit() (func(), chan struct{}) {
 func ExampleStartStop() {
 	moonRabbit, stop := newMoonRabbit()
 
-	sm := New(5 * time.Second)
-	sm.Add(Service{
+	sm := gov.New(5 * time.Second)
+	sm.Add(gov.Service{
+		Name: "moon-rabbit",
 		Start: func() error {
 			moonRabbit()
 			return nil
@@ -61,8 +65,9 @@ func ExampleStartStop() {
 func ExampleStopOnOsSignal() {
 	moonRabbit, stop := newMoonRabbit()
 
-	sm := New(5*time.Second, StopOnSignal(OSStopSignal()))
-	sm.Add(Service{
+	sm := gov.New(5*time.Second, gov.StopOnOSSignal())
+	sm.Add(gov.Service{
+		Name: "moon-rabbit",
 		Start: func() error {
 			moonRabbit()
 			return nil
@@ -102,11 +107,12 @@ func ExampleGracefullShutdownHTTPServer() {
 		}),
 	}
 
-	sm := New(
+	sm := gov.New(
 		29*time.Second,
-		StopOnSignal(SignalFromTime(time.After(4*time.Second))),
+		gov.StopOnSignal(gov.SignalFromTime(time.After(4*time.Second))),
 	)
-	sm.Add(Service{
+	sm.Add(gov.Service{
+		Name: "http-server",
 		Start: func() error {
 			if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 				return err
@@ -121,6 +127,26 @@ func ExampleGracefullShutdownHTTPServer() {
 			server.Close()
 		},
 	})
+
+	err := sm.Start()
+	if err != nil {
+		log.Fatalf("moon-rabbit not found: %v", err)
+	}
+}
+
+func ExampleGracefullShutdownWithTemplate() {
+	server := &http.Server{
+		Addr: ":0",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "moon-rabbit says hello!")
+		}),
+	}
+
+	sm := gov.New(
+		29*time.Second,
+		gov.StopOnSignal(gov.SignalFromTime(time.After(4*time.Second))),
+	)
+	sm.Add(service.NewHTTP(server))
 
 	err := sm.Start()
 	if err != nil {
