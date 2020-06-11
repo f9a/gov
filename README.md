@@ -1,4 +1,4 @@
-# goV
+# goV [![GoDoc][doc-img]][doc]
 
 > These are the chronicles of life and death and everything between
 >
