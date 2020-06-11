@@ -53,14 +53,16 @@ func ExampleStartStop() {
 		done <- sm.Start()
 	}()
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	err := sm.Stop()
 	if err != nil {
 		log.Fatalf("Sad moon-rabbit catched fire: %v", err)
 	}
 
-	<-done
+	err = <-done
+	fmt.Println(err)
+	// Output: <nil>
 }
 
 func ExampleStopOnOsSignal() {
@@ -84,7 +86,7 @@ func ExampleStopOnOsSignal() {
 		done <- sm.Start()
 	}()
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
@@ -99,6 +101,9 @@ func ExampleStopOnOsSignal() {
 	if err != nil {
 		log.Fatalf("Sad moon-rabbit catched fire: %v", err)
 	}
+
+	fmt.Println(err)
+	// Output: <nil>
 }
 
 func ExampleGracefullShutdownHTTPServer() {
@@ -110,7 +115,7 @@ func ExampleGracefullShutdownHTTPServer() {
 	}
 
 	sm := gov.New(
-		gov.StopOnSignal(gov.SignalFromTime(time.After(4 * time.Second))),
+		gov.StopOnSignal(gov.SignalFromTime(time.After(1 * time.Second))),
 	)
 	sm.Add(gov.Service{
 		Name: "http-server",
@@ -135,6 +140,9 @@ func ExampleGracefullShutdownHTTPServer() {
 	if err != nil {
 		log.Fatalf("moon-rabbit not found: %v", err)
 	}
+
+	fmt.Println(err)
+	// Output: <nil>
 }
 
 func ExampleGracefullShutdownWithTemplate() {
@@ -146,7 +154,7 @@ func ExampleGracefullShutdownWithTemplate() {
 	}
 
 	sm := gov.New(
-		gov.StopOnSignal(gov.SignalFromTime(time.After(4 * time.Second))),
+		gov.StopOnSignal(gov.SignalFromTime(time.After(1 * time.Second))),
 	)
 	sm.Add(service.NewHTTP(server))
 
@@ -154,4 +162,42 @@ func ExampleGracefullShutdownWithTemplate() {
 	if err != nil {
 		log.Fatalf("moon-rabbit not found: %v", err)
 	}
+
+	fmt.Println(err)
+	// Output: <nil>
+}
+
+func ExampleGracefullShutdownOfMultipleServices() {
+	server1 := &http.Server{
+		Addr: ":0",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "moon-rabbit says hello!")
+		}),
+	}
+
+	server2 := &http.Server{
+		Addr: ":0",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "moon-rabbit says hello!")
+		}),
+	}
+
+	sm := gov.New(
+		gov.StopOnSignal(gov.SignalFromTime(time.After(1 * time.Second))),
+	)
+	s1 := service.NewHTTP(server1)
+	s1.StopBefore = []gov.ServiceName{"http-server-2"}
+	sm.Add(s1)
+
+	s2 := service.NewHTTP(server2)
+	s2.Name = "http-server-2"
+	sm.Add(s2)
+
+	err := sm.Start()
+	if err != nil {
+		log.Fatalf("moon-rabbit not found: %v", err)
+	}
+
+	fmt.Println(err)
+	// Output: <nil>
 }

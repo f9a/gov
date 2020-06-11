@@ -457,3 +457,78 @@ func TestAlreadyStopped(t *testing.T) {
 	err = sm.Stop()
 	require.Equal(t, ErrAlreadyStopped, err)
 }
+
+func TestSetupErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      string
+		services func(*iWasHereInOrder, *Manager)
+	}{
+		{
+			name: "service already exists",
+			err:  "service s1 already exists",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1a := newStopService(p, "s1")
+				m.Add(s1a)
+
+				s1b := newStopService(p, "s1")
+				m.Add(s1b)
+			},
+		},
+		{
+			name: "mssing name",
+			err:  "service 0 Name is empty",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1 := newStopService(p, "s1")
+				s1.Name = ""
+				m.Add(s1)
+			},
+		},
+		{
+			name: "missing Start",
+			err:  "s1 Start cannot be nil",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1 := newStopService(p, "s1")
+				s1.Start = nil
+				m.Add(s1)
+			},
+		},
+		{
+			name: "missing Stop",
+			err:  "s1 Stop cannot be nil",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1 := newStopService(p, "s1")
+				s1.Stop = nil
+				m.Add(s1)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			places := &iWasHereInOrder{}
+			sm := New()
+
+			test.services(places, sm)
+
+			done := make(chan error)
+			go func() {
+				done <- sm.Start()
+			}()
+
+			// Increase the probability that the Manager.Start call has already been executed.
+			time.Sleep(500 * time.Millisecond)
+
+			err := sm.Stop()
+			if err != nil {
+				if test.err == "" {
+					t.Fatal(err)
+				}
+			}
+
+			err = <-done
+			require.EqualError(t, err, test.err)
+		})
+	}
+
+}

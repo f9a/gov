@@ -196,6 +196,24 @@ func TestShutdownStateMachine(t *testing.T) {
 			},
 			err: "s1 mention unknown service s2 in StopAfter",
 		},
+		{
+			name: "mention his self in StopAfter",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1 := newStopService(p, "s1")
+				s1.StopAfter = []ServiceName{"s1"}
+				m.Add(s1)
+			},
+			err: "s1 cannot mention his self in StopAfter",
+		},
+		{
+			name: "mention his self in StopBefore",
+			services: func(p *iWasHereInOrder, m *Manager) {
+				s1 := newStopService(p, "s1")
+				s1.StopBefore = []ServiceName{"s1"}
+				m.Add(s1)
+			},
+			err: "s1 cannot mention his self in StopBefore",
+		},
 	}
 
 	for _, test := range tests {
