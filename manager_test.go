@@ -10,28 +10,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func requireTouch(t *testing.T, m sync.Map, key interface{}) {
+func requireTouch(t *testing.T, m *sync.Map, key interface{}) {
 	t.Helper()
 	is, ok := m.Load(key)
 	require.True(t, ok)
 	require.True(t, is.(bool))
 }
 
-func requireUntouched(t *testing.T, m sync.Map, key interface{}) {
+func requireUntouched(t *testing.T, m *sync.Map, key interface{}) {
 	t.Helper()
 	_, ok := m.Load(key)
 	require.False(t, ok)
 }
 
 func TestNoService(t *testing.T) {
-	sm := New(1 * time.Second)
+	sm := New()
 	require.Equal(t, ErrNoService, sm.Start())
 }
 
 func TestStartStop(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop := make(chan struct{})
 	sm.Add(Service{
 		Name: "service-1",
@@ -44,6 +44,7 @@ func TestStartStop(t *testing.T) {
 			stop <- struct{}{}
 			touched.Store("stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -65,9 +66,9 @@ func TestStartStop(t *testing.T) {
 
 func TestStopOnSignal(t *testing.T) {
 	stopSignal := make(chan struct{})
-	sm := New(10*time.Second, StopOnSignal(stopSignal))
+	sm := New(StopOnSignal(stopSignal))
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop := make(chan struct{})
 	sm.Add(Service{
 		Name: "service-1",
@@ -80,6 +81,7 @@ func TestStopOnSignal(t *testing.T) {
 			stop <- struct{}{}
 			touched.Store("stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -99,9 +101,9 @@ func TestStopOnSignal(t *testing.T) {
 }
 
 func TestStartStopMultiServices(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop1 := make(chan struct{})
 	sm.Add(Service{
 		Name: "service1",
@@ -114,6 +116,7 @@ func TestStartStopMultiServices(t *testing.T) {
 			stop1 <- struct{}{}
 			touched.Store("service1_stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	stop2 := make(chan struct{})
@@ -128,6 +131,7 @@ func TestStartStopMultiServices(t *testing.T) {
 			stop2 <- struct{}{}
 			touched.Store("service2_stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -150,9 +154,9 @@ func TestStartStopMultiServices(t *testing.T) {
 }
 
 func TestKill(t *testing.T) {
-	sm := New(0 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop := make(chan struct{})
 	kill := make(chan struct{})
 	sm.Add(Service{
@@ -171,6 +175,8 @@ func TestKill(t *testing.T) {
 			kill <- struct{}{}
 			touched.Store("kill", true)
 		},
+		StopTimeout: 1 * time.Second,
+		KillTimeout: 1 * time.Second,
 	})
 
 	done := make(chan error)
@@ -192,9 +198,9 @@ func TestKill(t *testing.T) {
 }
 
 func TestStartError(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	sm.Add(Service{
 		Name: "service-1",
 		Start: func() error {
@@ -204,6 +210,7 @@ func TestStartError(t *testing.T) {
 		Stop: func(context.Context) {
 			touched.Store("stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	err := sm.Start()
@@ -217,9 +224,9 @@ func TestStartError(t *testing.T) {
 }
 
 func TestStartErrorMultiServices(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop := make(chan struct{})
 	sm.Add(Service{
 		Name: "service1",
@@ -232,6 +239,7 @@ func TestStartErrorMultiServices(t *testing.T) {
 			touched.Store("service1_stop", true)
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	sm.Add(Service{
@@ -243,6 +251,7 @@ func TestStartErrorMultiServices(t *testing.T) {
 		Stop: func(context.Context) {
 			touched.Store("service2_stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	err := sm.Start()
@@ -258,9 +267,9 @@ func TestStartErrorMultiServices(t *testing.T) {
 }
 
 func TestStartMultiErrors(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
-	touched := sync.Map{}
+	touched := &sync.Map{}
 	stop := make(chan struct{})
 	sm.Add(Service{
 		Name: "service1",
@@ -273,6 +282,7 @@ func TestStartMultiErrors(t *testing.T) {
 			touched.Store("service1_stop", true)
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	sm.Add(Service{
@@ -284,6 +294,7 @@ func TestStartMultiErrors(t *testing.T) {
 		Stop: func(context.Context) {
 			touched.Store("service2_stop", true)
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	err := sm.Start()
@@ -299,7 +310,7 @@ func TestStartMultiErrors(t *testing.T) {
 }
 
 func TestAlreadyStarted(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
 	stop := make(chan struct{})
 	sm.Add(Service{
@@ -311,6 +322,7 @@ func TestAlreadyStarted(t *testing.T) {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	var err error
@@ -333,7 +345,7 @@ func TestAlreadyStarted(t *testing.T) {
 }
 
 func TestNotStarted(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
 	stop := make(chan struct{})
 	sm.Add(Service{
@@ -345,6 +357,7 @@ func TestNotStarted(t *testing.T) {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	err := sm.Stop()
@@ -352,7 +365,7 @@ func TestNotStarted(t *testing.T) {
 }
 
 func TestAlreadyStopping(t *testing.T) {
-	sm := New(5 * time.Second)
+	sm := New()
 
 	stop := make(chan struct{})
 	sm.Add(Service{
@@ -368,6 +381,7 @@ func TestAlreadyStopping(t *testing.T) {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	startDone := make(chan error)
@@ -411,7 +425,7 @@ func TestAlreadyStopping(t *testing.T) {
 }
 
 func TestAlreadyStopped(t *testing.T) {
-	sm := New(10 * time.Second)
+	sm := New()
 
 	stop := make(chan struct{})
 	sm.Add(Service{
@@ -423,6 +437,7 @@ func TestAlreadyStopped(t *testing.T) {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -430,7 +445,7 @@ func TestAlreadyStopped(t *testing.T) {
 		done <- sm.Start()
 	}()
 
-	// Increase the probability that the Method.Start call has already been executed.
+	// Increase the probability that the Manager.Start call has already been executed.
 	time.Sleep(1 * time.Second)
 
 	err := sm.Stop()

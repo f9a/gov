@@ -35,7 +35,7 @@ func newMoonRabbit() (func(), chan struct{}) {
 func ExampleStartStop() {
 	moonRabbit, stop := newMoonRabbit()
 
-	sm := gov.New(5 * time.Second)
+	sm := gov.New()
 	sm.Add(gov.Service{
 		Name: "moon-rabbit",
 		Start: func() error {
@@ -45,6 +45,7 @@ func ExampleStartStop() {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -65,7 +66,7 @@ func ExampleStartStop() {
 func ExampleStopOnOsSignal() {
 	moonRabbit, stop := newMoonRabbit()
 
-	sm := gov.New(5*time.Second, gov.StopOnOSSignal())
+	sm := gov.New(gov.StopOnOSSignal())
 	sm.Add(gov.Service{
 		Name: "moon-rabbit",
 		Start: func() error {
@@ -75,6 +76,7 @@ func ExampleStopOnOsSignal() {
 		Stop: func(context.Context) {
 			stop <- struct{}{}
 		},
+		StopTimeout: 5 * time.Second,
 	})
 
 	done := make(chan error)
@@ -108,8 +110,7 @@ func ExampleGracefullShutdownHTTPServer() {
 	}
 
 	sm := gov.New(
-		29*time.Second,
-		gov.StopOnSignal(gov.SignalFromTime(time.After(4*time.Second))),
+		gov.StopOnSignal(gov.SignalFromTime(time.After(4 * time.Second))),
 	)
 	sm.Add(gov.Service{
 		Name: "http-server",
@@ -126,6 +127,8 @@ func ExampleGracefullShutdownHTTPServer() {
 		Kill: func() {
 			server.Close()
 		},
+		StopTimeout: 30 * time.Second,
+		KillTimeout: 3 * time.Second,
 	})
 
 	err := sm.Start()
@@ -143,8 +146,7 @@ func ExampleGracefullShutdownWithTemplate() {
 	}
 
 	sm := gov.New(
-		29*time.Second,
-		gov.StopOnSignal(gov.SignalFromTime(time.After(4*time.Second))),
+		gov.StopOnSignal(gov.SignalFromTime(time.After(4 * time.Second))),
 	)
 	sm.Add(service.NewHTTP(server))
 

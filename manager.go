@@ -39,12 +39,25 @@ type Service struct {
 	// Stop stops a service and is required
 	Stop func(context.Context)
 	// When stop was not successfull after a given timeout kill is executed.
+	// todo: Add context.Context argument
 	Kill func()
+	// StopTimeout max duration before Kill gets executed
+	StopTimeout time.Duration
+	// KillTimeout max duration before shutdown failes
+	KillTimeout time.Duration
+
+	StopAfter  []ServiceName
+	StopBefore []ServiceName
 }
 
 type result struct {
 	err  error
 	from string
+}
+
+type shutdownRequest struct {
+	from    chan struct{}
+	service Service
 }
 
 // ServiceErrors contains all service errors
@@ -94,10 +107,10 @@ func (serr ServiceErrors) Error() string {
 
 // Manager represents a service-manager which controls the lifecycle for provided services.
 type Manager struct {
-	stopTimeout time.Duration
-	stopSignal  <-chan struct{}
+	stopSignal <-chan struct{}
 
-	services []Service
+	services      []Service
+	shutdownGraph *shutdownGraph
 
 	lock      sync.Mutex
 	isStarted bool
@@ -105,12 +118,13 @@ type Manager struct {
 
 	err error
 
-	errs            *ServiceErrors
-	startedServices map[ServiceName]Service
-	stoppedFrom     chan error
-	stopped         chan struct{}
-	serviceStopped  chan result
-	startStopping   chan chan error
+	errs               *ServiceErrors
+	startedServices    map[ServiceName]func()
+	stoppedFrom        chan error
+	stopped            chan struct{}
+	shutdownSuccessful chan result
+	shutdownFailed     chan Service
+	startStopping      chan chan error
 }
 
 // Add adds a new service to the manager.
@@ -123,6 +137,11 @@ func (mngr *Manager) sendStoppedSignals() {
 	if mngr.stoppedFrom != nil {
 		mngr.stoppedFrom <- mngr.errs.err()
 	}
+}
+
+type signalRule struct {
+	to chan struct{}
+	on ServiceName
 }
 
 type stateFunc func(*Manager) stateFunc
@@ -162,27 +181,20 @@ func pid1(sm *Manager) stateFunc {
 		ss[service.Name] = struct{}{}
 	}
 
-	sm.startedServices = map[ServiceName]Service{}
-	for _, service := range sm.services {
-		sm.startedServices[service.Name] = service
-		go func(service Service) {
-			if err := service.Start(); err != nil {
-				// fmt.Printf("Service %v is stopped with err %v\n", service.Name, err)
-				sm.serviceStopped <- result{
-					from: service.Name,
-					err:  err,
-				}
-				return
-			}
+	sm.shutdownGraph, sm.err = newShutdownGraph(sm.services)
+	if sm.err != nil {
+		return nil
+	}
 
-			sm.serviceStopped <- result{from: service.Name}
-			// fmt.Printf("Service %v is stopped\n", service.Name)
-		}(service)
+	sm.startedServices = map[ServiceName]func(){}
+	for _, service := range sm.services {
+		shutdown := lifecycle(sm.shutdownSuccessful, sm.shutdownFailed, service)
+		sm.startedServices[service.Name] = shutdown
 	}
 
 	for {
 		select {
-		case result := <-sm.serviceStopped:
+		case result := <-sm.shutdownSuccessful:
 			delete(sm.startedServices, result.from)
 			sm.errs.add(result.from, result.err)
 			return stopping
@@ -192,8 +204,6 @@ func pid1(sm *Manager) stateFunc {
 		}
 
 	}
-
-	panic("pid1 is in unkonw state")
 }
 
 func stopping(sm *Manager) stateFunc {
@@ -203,65 +213,58 @@ func stopping(sm *Manager) stateFunc {
 		return nil
 	}
 
-	stoppingDeadline, cancel := context.WithTimeout(context.Background(), sm.stopTimeout)
+	shutdownService := make(chan shutdownRequest)
 
-	for _, service := range sm.startedServices {
-		go func(service Service) {
-			service.Stop(stoppingDeadline)
-		}(service)
+	ssm := shutdownStateMachine{
+		shutdownService: shutdownService,
+		graph:           sm.shutdownGraph,
 	}
+	go ssm.Start()
 
+	waitForShutdown := map[ServiceName]chan struct{}{}
 	for {
 		select {
-		case <-stoppingDeadline.Done():
-			return killing
 		case from := <-sm.startStopping:
 			from <- ErrAlreadyStopping
 			continue
-		case result := <-sm.serviceStopped:
+		case req := <-shutdownService:
+			shutdown, ok := sm.startedServices[req.service.Name]
+			if !ok {
+				// Service is already down because of an error while starting.
+				req.from <- struct{}{}
+				continue
+			}
+
+			waitForShutdown[req.service.Name] = req.from
+			shutdown()
+		case result := <-sm.shutdownSuccessful:
 			if result.err != nil {
 				sm.errs.add(result.from, result.err)
 			}
+
 			delete(sm.startedServices, result.from)
+
+			if from, ok := waitForShutdown[result.from]; ok {
+				from <- struct{}{}
+			}
+
 			if len(sm.startedServices) == 0 {
-				cancel()
 				sm.sendStoppedSignals()
 				return nil
 			}
-		}
-	}
+		case service := <-sm.shutdownFailed:
+			delete(sm.startedServices, service.Name)
 
-	panic("stopping is in unkown state")
-}
-
-func killing(sm *Manager) stateFunc {
-	// fmt.Println("Enter killing state")
-	for _, service := range sm.startedServices {
-		if service.Kill != nil {
-			go func(service Service) {
-				service.Kill()
-			}(service)
-		}
-	}
-
-	for {
-		select {
-		case from := <-sm.startStopping:
-			from <- ErrAlreadyStopping
-			continue
-		case result := <-sm.serviceStopped:
-			if result.err != nil {
-				sm.errs.add(result.from, result.err)
+			if from, ok := waitForShutdown[service.Name]; ok {
+				from <- struct{}{}
 			}
-			delete(sm.startedServices, result.from)
+
 			if len(sm.startedServices) == 0 {
 				sm.sendStoppedSignals()
 				return nil
 			}
 		}
 	}
-
-	panic("killing is in unkown state")
 }
 
 func (mngr *Manager) loop() error {
@@ -284,9 +287,9 @@ func (mngr *Manager) loop() error {
 
 // Start executes the Start method for each previously added service in a seperated goroutine.
 // A ServiceErrors is returned when at least one Service.Start method failed.
-// If a signal-channle is given, the channel is watched when a signal is sent Manager.Stop is executed.
+// If a signal-channel is given, the channel waits for signal, if received Manager.Stop is executed.
 // Start can only be called once otherwise ErrAlreadyStarted error is returned.
-// If a start-method fails during start process (return error before Manager.Stop was called)
+// If a start-method fails during start process (service return error before Manager.Stop was called)
 // Manager.Stop will be exectued to stop all Service which have been started already.
 // If no service is registred ErrNoService is returned.
 // Before any service is started, it is ensured that the Service.Start and Service.Stop is not nil.
@@ -321,13 +324,11 @@ func (mngr *Manager) Start() error {
 // even if stop-timeout has been triggered and Manager.Stop already starts to execute Service.Kill methods.
 // If the Service.Stop is not terminated after the stop-timeout duration,
 // the Kill method will be executed for that service, if available.
-// All Service.Kill methods will be executed simultaneously, waiting until all kill-methods
-// are completed before Stop returns. Therefore you have to make sure that a
-// Kill Method of a service is not blocking forever.
 // It will return a ServiceErrors error when at least on Service.Start method failed
+// Manager is considered stopped when either all Service.Start methods are returned
+// or all kill-timeouts for all services are elapsed.
 // If service-manager is already stopped ErrAlreadyStopped error is returned.
 // If service-manager in stopping state ErrAlreadyStopping error is returned.
-// A service is considered stopped when the stop-goroutine is terminated.
 func (mngr *Manager) Stop() error {
 	mngr.lock.Lock()
 	if !mngr.isStarted {
@@ -373,13 +374,13 @@ func StopOnOSSignal() Option {
 }
 
 // New creates a new service-manager
-func New(stopTimeout time.Duration, options ...Option) *Manager {
+func New(options ...Option) *Manager {
 	mngr := &Manager{
-		stopTimeout:    stopTimeout,
-		startStopping:  make(chan chan error),
-		serviceStopped: make(chan result),
-		stopped:        make(chan struct{}),
-		errs:           &ServiceErrors{},
+		startStopping:      make(chan chan error),
+		shutdownSuccessful: make(chan result),
+		shutdownFailed:     make(chan Service),
+		stopped:            make(chan struct{}),
+		errs:               &ServiceErrors{},
 	}
 
 	for _, opt := range options {
