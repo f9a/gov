@@ -21,7 +21,7 @@ var ErrAlreadyStopping = errors.New("service-manager is already stopping")
 // ErrNotStarted is returned from Manager.Stop when it is called before Manager.Start is called.
 var ErrNotStarted = errors.New("service-manager is not started yet")
 
-// ErrAlreadyStopped is returned from Manager.Stop when is is called when service-manager is already stopped.
+// ErrAlreadyStopped is returned from Manager.Stop when it was called before.
 var ErrAlreadyStopped = errors.New("service-manager is already stopped")
 
 // ErrNoService is returned from Manager.Start when no service is added
